@@ -1,0 +1,254 @@
+---
+title: "Project: STAT 525"
+author: "KRISHNAN RAMAN, 2nd Year PhD. Statistics "
+date: "12/10/2019"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# An exploration of trading strategies with Dow Jones components
+
+The Dow Jones Index (DIA) is a weighted average of 30 stocks.   
+These 30 companies are some of the largest industrial giants in the US.   
+In this analysis, we explore the following questions:   
+
+* Does the log-normal assumption apply to Dow stock returns ?
+* Predict the DIA using multiple linear regression, as a function of the 30 Dow components.
+* Use Model Selection to systematically select the optimal number of covariates.
+* Create a high 90% Rsquare Dow Regression model with fewest possible number of covariate stocks.
+* Track the performance of the DIA versus the Dow Regression Model over a year
+* 1-way Anova: Compare Diversification(Holding all 30 stocks) vs Holding a Single Stock
+* Cell Means Model, Means Only Model, Effects Plot
+* 1-way Anova: Compare annual returns across 10 different portfolios with 3 stocks in each portfolio
+* 1-way Anova: Compare Buy & Hold Trading Strategy vs Buy Highest Sell Lowest vs Contrarian Strategy
+
+### Data
+
+The Daily Holding Period returns for the Dow Jones Index (DIA) and its 30 stock components were sourced from **Wharton Research Data Services**, a subscription-only source of Financial Time Series. For each of the **30 stocks + DIA  = 31 tickers**, we obtained data for all of 2018  ( **There were 251 trading days in 2018** ). That gives us **31x251 = 7781 rows ** of daily returns. These are shown below:
+
+```{r message=FALSE}
+rm(list=ls())
+library(fitdistrplus)
+library(ggplot2)
+library(gtools)
+library(leaps)
+library(effects)
+
+dowfile = "~/Desktop/525/project/dow.csv"
+df = read.csv(dowfile)
+head(df)
+```
+```{r}
+tail(df)
+```
+The histogram of daily returns is firmly centered at 0. On a given day, the Dow components don't move that much.
+```{r}
+hist(df$RET, main="Histogram of Daily Returns of DIA & its components")
+```
+In fact, the max loss is -10.18 %, and the max gain 11.13 %, on the Dow components. The median daily gain is approx 0%.
+```{r}
+summary(df$RET)
+```
+
+### LogNormality of Returns
+
+We split the data by ticker. Financial returns are postulated to be log-normal ie. the log of returns is gaussian. We first fit a Normal distribution upon the log returns. We test the goodness of fit by visualizing the qq plot of six of the fitted distributions below.
+
+```{r warning=FALSE}
+tickerplot = function(ticker) {
+  ret = log(1.0 + tickersplit[[ticker]]$RET )
+  fitnorm<-fitdist(ret,"norm") # fit a normal distribution
+  qqcomp(fitnorm, main=paste(ticker," AIC:",round(fitnorm$aic, 2)))
+}
+
+tickersplit = split(df, df$TICKER)
+par(mfrow=c(2,3))
+tickers = as.character(unique(df$TICKER))
+tickers = tickers[tickers != "DIA"]
+sapply(tickers[1:6], tickerplot)
+par(mfrow=c(1,1))
+```
+From the QQ plots above, we note that the lognormal assumption is violated in the tails.   
+
+### Model Selection
+
+In order to build a multiple linear regression model with Dow Jones (DIA) as the Response, and each of the 30 Dow stocks as the predictors, it will be convenient to construct a simple matrix with 31 columns & 251 rows. The first column DIA is the Response, the remaining 30 columns are the predictor stocks, and the 251 rows are the daily returns over the 2018 trading year. This process is shown below:
+```{r}
+dow = matrix(0,nrow=251,ncol=31)
+dow[,1]=tickersplit[["DIA"]]$RET
+for(i in 2:31) {
+  myticker = tickers[i-1]
+  dow[,i] = tickersplit[[myticker]]$RET
+}
+colnames(dow) <- c("DIA", tickers)
+dowdf = data.frame(dow)
+dow[1:5,1:7]
+```
+Now we are ready to perform Forward Stepwise Model Selection.
+```{r}
+x = dow[,2:31]
+y = dow[,1]
+forward_varsec = summary(regsubsets(x=x,y=y,method="forward", nbest=1,nvmax=30, all.best=FALSE))
+forward_varsec$outmat
+```
+
+It is clear that a single company 3M ( MMM ) alone is a good proxy for the Dow.   
+From row 5 above, **the most variation in the Dow Jones Index DIA is explained by the top 5 companies: 3M, Boeing(BA), JP Morgan (JPM), Visa (V) & United Healthcare (UNH)**
+From row 29,30 above, the company that explains the least variation in the Dow is Walgreens Boots Alliance (WBA).   
+Similar conclusions may be drawn from Backward Selection.
+
+```{r}
+#backward_varsec = summary(regsubsets(x=x,y=y,method="backward", nbest=1,nvmax=30,all.best=FALSE))
+#backward_varsec$outmat
+```
+
+To visualize the explanatory power of individual covariates, let us plot Rsquare as more & more covariates are added to the model.
+
+```{r}
+plot(1:30, forward_varsec$rsq, main="Rsquare vs number of covariates")
+```
+
+### Create a high 90% Rsquare Dow Regression model with fewest possible number of covariate stocks.  
+
+From the above plot, we obtain about 90% Rsq from just the top 3 stocks. Lets now build a multiple linear regression model to predict the Dow Jones Returns (DIA), using just the top 3 stocks: 3M (MMM), Boeing (BA) & Visa (V)
+
+```{r message=FALSE}
+# from the 3 best (forward selection) predictors
+mod1 = lm(dow[,"DIA"]~dow[,"MMM"]+dow[,"BA"]+dow[,"V"])
+summary(mod1)
+anova(mod1)
+#residual plot & diagnostics ( lecture notes Chp 11)
+plot(mod1$residuals)
+library(car)
+qqPlot(mod1)
+```
+
+As expected, we obtain 89% Rsquare from a linear model with just 3 covariates. The linear model's F statistic is highly significant so the model is a good fit. Also, each of the 3 covariates have a highly significant t statistic.Finally, the residual plot does not show any pattern or overdispersion. While the QQ plot does show 2 outliers (78,205) that may have outsize leverage, the normality assummption of the residual errors holds.
+
+### Track the performance of the DIA versus the Dow Regression Model over a year
+We construct a portfolio with similar returns as the Dow, using the betas (coefficients) from the regression above. We track the performance of this portfolio versus the Dow over 1 year.
+```{r message=FALSE}
+myportfolio = 0.32*dow[, "MMM"] + 0.17*dow[, "BA"]  + 0.26*dow[, "V"]
+dowdf$myportfolio = myportfolio
+ggplot(dowdf, aes(x=1:251, y=dowdf$DIA)) + geom_smooth(method="loess", span = 0.5, color="blue") + geom_smooth(span=0.6, data=dowdf, aes(x=1:251, y=dowdf$DIA), color="red") +ggtitle("DIA vs Regression Portfolio")
+```
+So we see the Dow in blue tracks the returns of myportfolio in red very closely. We are able to visualize them apart only because the 2 loess curves have different spans (In fact, if we match the span of the 2 loess curves, we cannot distinguish beween the 2 curves! )
+
+### 1-way Anova: Compare Diversification(Holding all 30 stocks) vs Holding a Single Stock  
+
+Assume the first investor buys just 1 stock, IBM. Whereas the second investor diversifies i.e. distributes money among all 30 Dow stocks ie. buys the DIA index. They both hold the instrument for a week. Lets compare their returns to see if there is a statistically significant difference.
+
+```{r}
+#Nondiversification vs Diversification
+n = 7
+returns = matrix(0, nrow=n*2, ncol=2)
+colnames(returns) <- c("Returns", "Portfolio")
+returns[,1] = c(dow[, "IBM"][1:n], dow[, "DIA"][1:n])
+returns[,2] = c(rep(1, n),rep(2, n))
+returns = data.frame(returns)
+returns$Returns = as.double(as.character( returns$Returns ))
+returns$Portfolio = factor( returns$Portfolio )
+res.aov <- aov(Returns~Portfolio, data = returns)
+summary(res.aov)
+#plot(res.aov)
+TukeyHSD(res.aov)
+boxplot(Returns~Portfolio, data = returns)
+
+# Tukey vs Welch's t test since homogenaity of variance is not met
+```
+
+From the p-value on the Tukey Test, we conclude there is no significant difference in the returns of the Dow versus individual Dow components. This test yields similar results when performed against each of the 30 tickers, not just IBM. The Dow components perform mostly alike over a weekly duration. But it is clear from the Boxplots that the homogenaiety of variance is not met. So we can perform a Welch's T test to check the Tukey Results.
+
+```{r}
+t.test(returns$Returns[returns$Portfolio=="1"],returns$Returns[returns$Portfolio=="2"])
+```
+Once again, the T test p-value (0.16 vs 0.14 in Tukey, since Tukey uses a common variance) shows no significant difference in the mean returns (Equivalently, the confidence interval of mean differences includes zero)
+
+### Cell Means Model, Means Only Model, Effects Plot
+
+We obtain the Cell Means model. We also obtain the regular linear model with intercept & compare it versus the mean-only model. Further, we examine an effects plot for the 2 strategies.
+```{r}
+lm1 = lm(returns$Returns~returns$Portfolio - 1) # Cell means model
+summary(lm1)
+lm2 = lm(Returns~Portfolio,data=returns) # Regular linear model
+plot(allEffects(lm2))
+lm3 <- lm(Returns~1,data=returns) # mean only model
+summary(lm3)
+anova(lm2,lm3)
+```
+
+### 1-way Anova: Compare annual returns across 10 different portfolios with 3 stocks in each portfolio
+
+Lets construct 10 combinations of 3 Dow stocks, and see if the mean returns are statistically different over a 1 year duration. Each portfolio is a linear combination of 3 different Dow stocks.
+```{r}
+# 1-way anova lect notes 12
+
+threecomb = combinations(5,3,tickers)
+nc3 = 10 # 5 choose 3 = 10
+returns = matrix(0, nrow=251*(1+nc3), ncol=2)
+colnames(returns) <- c("Returns", "Portfolio")
+
+s = 1
+for(i in 1:nc3) {
+  threetickers = threecomb[i,]
+  ticker1 = threetickers[1]
+  ticker2 = threetickers[2]
+  ticker3 = threetickers[3]
+  # portfolio is simple linear combination of 3 tickers
+  portfolio = dow[, ticker1] + dow[, ticker2] + dow[, ticker3]
+  returns[s:(s+250),1] = portfolio
+  returns[s:(s+250),2] = rep(i, 251)
+  s = s + 251
+}
+returns[s:(s+250),1] = dow[, "DIA"]
+returns[s:(s+250),2] = rep(11, 251)
+
+returns = data.frame(returns)
+returns$Returns = as.double(as.character( returns$Returns ))
+returns$Portfolio = factor( returns$Portfolio )
+res.aov <- aov(Returns~Portfolio, data = returns)
+summary(res.aov)
+TukeyHSD(res.aov)
+boxplot(Returns~Portfolio, data = returns)
+plot(allEffects(lm(Returns~Portfolio,data=returns)))
+```
+
+Amazingly, none of the 10 portfolios are significantly different over the annual duration! Further, the 11th portfolio is the Dow itself! This tells us that it is incredibly difficult to find an effective Buy and Hold Strategy with linear combination of Dow stocks, that outperforms the Dow Jones Index. No matter how we construct a portfolio, it performs as good as holding the index. This is why mutual funds which attempt to beat the Dow by performing manual selection of Dow stocks intelligently, fail to do so. From the Bpx plot we see that the 11th box ie. the Dow has the same returns but the lowest variance. Thus, holding the index is the best Buy & Hold Strategy. 
+
+### 1-way Anova: Compare Buy & Hold Trading Strategy vs Buy Highest Sell Lowest vs Contrarian Strategy
+
+Trading Strategy 1. Sort yesterday's returns. Sell the best performing stock & buy the worst performing.
+Trading Strategy 2. Sort yesterday's returns. BUY the best performing stock & SELL the worst performing.
+Trading Strategy 3. Just buy the index (DIA).
+```{r}
+components = dow[,2:31]
+trading = matrix(0,nrow=250,ncol=3)
+for (i in 2:251) {
+  yesterday = components[i-1,]
+  today = components[i,]
+  res = sort(yesterday, decreasing=TRUE, index.return=TRUE)
+  best = res$ix[1]
+  worst = res$ix[30]
+  trading[i-1,1] = today[worst]-today[best]
+  trading[i-1,2] = today[best]-today[worst]
+  trading[i-1,3] = dow[i,1]
+}
+tradingreturns = matrix(0, nrow=250*3, ncol=2)
+tradingreturns[1:250,1] = trading[,1]
+tradingreturns[251:500,1] = trading[,2]
+tradingreturns[501:750,1] = trading[,3]
+tradingreturns[1:250,2] = rep(1,250)
+tradingreturns[251:500,2] = rep(2,250)
+tradingreturns[501:750,2] = rep(3,250)
+
+colnames(tradingreturns) <- c("Returns", "Portfolio")
+tradingreturns = data.frame(tradingreturns)
+tradingreturns$Returns = as.double(as.character( tradingreturns$Returns ))
+tradingreturns$Portfolio = factor( tradingreturns$Portfolio )
+res.aov <- aov(Returns~Portfolio, data = tradingreturns)
+summary(res.aov)
+TukeyHSD(res.aov)
+boxplot(Returns~Portfolio, data = tradingreturns)
+```
+Once again, we notice that even our moderately sophisticated trading strategy has failed to yield a profit indistinguishable from simply Buying & Holding the Dow Index! When traders complain about "lack of alpha", this is exactly what they mean: the trading strategy returns are not significantly different from zero.

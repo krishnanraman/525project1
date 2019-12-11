@@ -35,7 +35,9 @@ library(gtools)
 library(leaps)
 library(effects)
 
+###########   CHANGE THIS LOCATION TO POINT TO THE SOURCE OF DATA ######
 dowfile = "~/Desktop/525/project/dow.csv"
+
 df = read.csv(dowfile)
 head(df)
 ```
@@ -137,33 +139,41 @@ So we see the Dow in blue tracks the returns of myportfolio in red very closely.
 
 ### 1-way Anova: Compare Diversification(Holding all 30 stocks) vs Holding a Single Stock  
 
-Assume the first investor buys just 1 stock, IBM. Whereas the second investor diversifies i.e. distributes money among all 30 Dow stocks ie. buys the DIA index. They both hold the instrument for a week. Lets compare their returns to see if there is a statistically significant difference.
+Assume the first investor buys just 1 stock, MSFT. Whereas the second investor diversifies i.e. distributes money among all 30 Dow stocks ie. buys the DIA index. They both hold the instrument for 6 months. Lets compare their returns to see if there is a statistically significant difference.
 
 ```{r}
 #Nondiversification vs Diversification
-n = 7
-returns = matrix(0, nrow=n*2, ncol=2)
+n = 251-180+1 #6 months = 180 days. We have 251 trading days in 2018, so there are n such "6 month periods"
+returns = matrix(0, nrow=2*n, ncol=2)
 colnames(returns) <- c("Returns", "Portfolio")
-returns[,1] = c(dow[, "IBM"][1:n], dow[, "DIA"][1:n])
-returns[,2] = c(rep(1, n),rep(2, n))
+
+for(i in 1:n) {
+  returns[i,1] = sum(dow[, "MSFT"][i:(180+i)])
+  returns[i,2] = 1 # factor #1
+}
+for(i in (n+1):(2*n)) {
+  y = i-n
+  returns[i,1] = sum(dow[, "DIA"][y:(180+y)])
+  returns[i,2] = 2 #factor #2
+}
+
 returns = data.frame(returns)
 returns$Returns = as.double(as.character( returns$Returns ))
 returns$Portfolio = factor( returns$Portfolio )
 res.aov <- aov(Returns~Portfolio, data = returns)
 summary(res.aov)
-#plot(res.aov)
 TukeyHSD(res.aov)
 boxplot(Returns~Portfolio, data = returns)
 
 # Tukey vs Welch's t test since homogenaity of variance is not met
 ```
 
-From the p-value on the Tukey Test, we conclude there is no significant difference in the returns of the Dow versus individual Dow components. This test yields similar results when performed against each of the 30 tickers, not just IBM. The Dow components perform mostly alike over a weekly duration. But it is clear from the Boxplots that the homogenaiety of variance is not met. So we can perform a Welch's T test to check the Tukey Results.
+From the p-value on the Tukey Test, we conclude there is a significant difference in the returns of the Dow versus holding just an individual Dow component. The Dow offers 17.3% lower returns on average than MSFT, over a 6 month period in 2018. But it is clear from the Boxplots that the homogenaiety of variance is not met. So we can perform a Welch's T test to confirm the Tukey Results.
 
 ```{r}
 t.test(returns$Returns[returns$Portfolio=="1"],returns$Returns[returns$Portfolio=="2"])
 ```
-Once again, the T test p-value (0.16 vs 0.14 in Tukey, since Tukey uses a common variance) shows no significant difference in the mean returns (Equivalently, the confidence interval of mean differences includes zero)
+Once again, the T test p-value (slightly higher p-value than Tukey, since Tukey uses a common variance for the 2 groups) shows significant difference in the mean returns (Equivalently, the confidence interval of mean differences does NOT include zero)
 
 ### Cell Means Model, Means Only Model, Effects Plot
 
@@ -180,29 +190,30 @@ anova(lm2,lm3)
 
 ### 1-way Anova: Compare annual returns across 10 different portfolios with 3 stocks in each portfolio
 
-Lets construct 10 combinations of 3 Dow stocks, and see if the mean returns are statistically different over a 1 year duration. Each portfolio is a linear combination of 3 different Dow stocks.
+Lets construct 10 combinations of 3 Dow stocks, and see if the mean returns are statistically different over a 6 month duration. Each portfolio is a linear combination of 3 different Dow stocks.
 ```{r}
 # 1-way anova lect notes 12
-
-threecomb = combinations(5,3,tickers)
+n = 251-180+1 #6 months = 180 days. We have 251 trading days in 2018, so there are n such "6 month periods"
 nc3 = 10 # 5 choose 3 = 10
-returns = matrix(0, nrow=251*(1+nc3), ncol=2)
+threecomb = combinations(5,3,tickers)
+returns = matrix(0, nrow=(n*nc3), ncol=2)
 colnames(returns) <- c("Returns", "Portfolio")
 
 s = 1
-for(i in 1:nc3) {
-  threetickers = threecomb[i,]
+for(t in 1:nc3) {
+  threetickers = threecomb[t,]
   ticker1 = threetickers[1]
   ticker2 = threetickers[2]
   ticker3 = threetickers[3]
-  # portfolio is simple linear combination of 3 tickers
-  portfolio = dow[, ticker1] + dow[, ticker2] + dow[, ticker3]
-  returns[s:(s+250),1] = portfolio
-  returns[s:(s+250),2] = rep(i, 251)
-  s = s + 251
+  for(i in 1:n) {
+    # portfolio is simple linear combination of 3 tickers
+    portfolio = sum(dow[, ticker1][i:(180+i)]) + sum(dow[, ticker2][i:(180+i)]) + sum(dow[, ticker3][i:(180+i)])
+    
+    returns[s,1] = portfolio/3 #one third of each stock
+    returns[s,2] = t # t is the factor of the t-th portfolio
+    s = s + 1
+  }
 }
-returns[s:(s+250),1] = dow[, "DIA"]
-returns[s:(s+250),2] = rep(11, 251)
 
 returns = data.frame(returns)
 returns$Returns = as.double(as.character( returns$Returns ))
@@ -212,35 +223,54 @@ summary(res.aov)
 TukeyHSD(res.aov)
 boxplot(Returns~Portfolio, data = returns)
 plot(allEffects(lm(Returns~Portfolio,data=returns)))
+threecomb
 ```
 
-Amazingly, none of the 10 portfolios are significantly different over the annual duration! Further, the 11th portfolio is the Dow itself! This tells us that it is incredibly difficult to find an effective Buy and Hold Strategy with linear combination of Dow stocks, that outperforms the Dow Jones Index. No matter how we construct a portfolio, it performs as good as holding the index. This is why mutual funds which attempt to beat the Dow by performing manual selection of Dow stocks intelligently, fail to do so. From the Bpx plot we see that the 11th box ie. the Dow has the same returns but the lowest variance. Thus, holding the index is the best Buy & Hold Strategy. 
+Since we have 10 portfolios, we can compare any 2 of these in 10C2 = 45 different ways. Of these 45, the p-values tell us that atleast 25 of these comparisons are significantly different over the 6 month duration. This tells us that it is not too difficult to find an effective Buy and Hold Strategy with linear combination of Dow stocks that outperforms the Dow Jones Index with statistical significance.   
 
-### 1-way Anova: Compare Buy & Hold Trading Strategy vs Buy Highest Sell Lowest vs Contrarian Strategy
+Looking carefully at the 3-tuple combinations & the effects plot, it is clear that the holding Apple-Amex-Boeing over a 6 month period offers significantly better return (+ 12%) than holding Boeing-Citi-Caterpillar (- 5%)
 
-Trading Strategy 1. Sort yesterday's returns. Sell the best performing stock & buy the worst performing.
-Trading Strategy 2. Sort yesterday's returns. BUY the best performing stock & SELL the worst performing.
-Trading Strategy 3. Just buy the index (DIA).
+While performance is obvious in hindsight, how much the optimal tuple be discovered ? Below, we compare long-only trading strategies that attempt to beat the Dow by active trading, instead of Buy & Hold.
+
+### 1-way Anova on LONG-ONLY
+
+1. Buy yesterday's WORST performing stock 
+2. Buy yesterday's BEST performing stock.
+3. Just buy the index (DIA).
 ```{r}
+n = 251-180 #6 months = 180 days. We have 251 trading days in 2018, so there are n such "6 month periods"
 components = dow[,2:31]
-trading = matrix(0,nrow=250,ncol=3)
-for (i in 2:251) {
-  yesterday = components[i-1,]
-  today = components[i,]
-  res = sort(yesterday, decreasing=TRUE, index.return=TRUE)
-  best = res$ix[1]
-  worst = res$ix[30]
-  trading[i-1,1] = today[worst]-today[best]
-  trading[i-1,2] = today[best]-today[worst]
-  trading[i-1,3] = dow[i,1]
+tradingreturns = matrix(0, nrow=3*n, ncol=2)
+
+# i from 1 to n=72
+# for i = 1, look at days 2 to 181
+# for i = 2, look at days 3 to 182
+# etc.
+for(i in 1:n) {
+  trading = matrix(0,nrow=180,ncol=3)
+  
+  for(s in (1+i):(180+i)) {
+    yesterday = components[s-1,]
+    today = components[s,]
+    res = sort(yesterday, decreasing=TRUE, index.return=TRUE)
+    best = res$ix[1]
+    worst = res$ix[30]
+    trading[(s-i),1] = today[worst]
+    trading[(s-i),2] = today[best]
+    trading[(s-i),3] = dow[s,1]
+  }
+  # arithmetic prog
+  # start = a + (n-1)*d
+  j = 1 + (i-1)*3
+  tradingreturns[j,1] = sum(trading[,1])
+  tradingreturns[j,2] = 1 # first trading strategy is factor 1
+  
+  tradingreturns[(j+1),1] = sum(trading[,2])
+  tradingreturns[(j+1),2] = 2 # second trading strategy is factor 2
+  
+  tradingreturns[(j+2),1] = sum(trading[,3])
+  tradingreturns[(j+2),2] = 3 # dow strategy is factor 3
 }
-tradingreturns = matrix(0, nrow=250*3, ncol=2)
-tradingreturns[1:250,1] = trading[,1]
-tradingreturns[251:500,1] = trading[,2]
-tradingreturns[501:750,1] = trading[,3]
-tradingreturns[1:250,2] = rep(1,250)
-tradingreturns[251:500,2] = rep(2,250)
-tradingreturns[501:750,2] = rep(3,250)
 
 colnames(tradingreturns) <- c("Returns", "Portfolio")
 tradingreturns = data.frame(tradingreturns)
@@ -251,4 +281,127 @@ summary(res.aov)
 TukeyHSD(res.aov)
 boxplot(Returns~Portfolio, data = tradingreturns)
 ```
-Once again, we notice that even our moderately sophisticated trading strategy has failed to yield a profit indistinguishable from simply Buying & Holding the Dow Index! When traders complain about "lack of alpha", this is exactly what they mean: the trading strategy returns are not significantly different from zero.
+Both these active trading strategies fare poorly versus just holding the Dow. Simply buying the Index beats buying yesterday's worst by 6.8%, and beats buying yesterday's best by a whopping 36.9%. Further, both these trading strategies had a negative median return and much higher variance than the index.
+
+### 1-way Anova on LONG-SHORT: 
+
+1. Buy yesterday's WORST performing stock, SELL yesterday's BEST performing stock
+2. Buy yesterday's BEST performing stock, SELL yesterday's WORST performing stock
+3. Just buy the index (DIA).
+
+```{r}
+n = 251-180 #6 months = 180 days. We have 251 trading days in 2018, so there are n such "6 month periods"
+components = dow[,2:31]
+tradingreturns = matrix(0, nrow=3*n, ncol=2)
+
+# i from 1 to n=72
+# for i = 1, look at days 2 to 181
+# for i = 2, look at days 3 to 182
+# etc.
+for(i in 1:n) {
+  trading = matrix(0,nrow=180,ncol=3)
+  
+  for(s in (1+i):(180+i)) {
+    yesterday = components[s-1,]
+    today = components[s,]
+    res = sort(yesterday, decreasing=TRUE, index.return=TRUE)
+    best = res$ix[1]
+    worst = res$ix[30]
+    trading[(s-i),1] = today[worst] - today[best]
+    trading[(s-i),2] = today[best] - today[worst]
+    trading[(s-i),3] = dow[s,1]
+  }
+  # arithmetic prog
+  # start = a + (n-1)*d
+  j = 1 + (i-1)*3
+  tradingreturns[j,1] = sum(trading[,1])
+  tradingreturns[j,2] = 1 # first trading strategy is factor 1
+  
+  tradingreturns[(j+1),1] = sum(trading[,2])
+  tradingreturns[(j+1),2] = 2 # second trading strategy is factor 2
+  
+  tradingreturns[(j+2),1] = sum(trading[,3])
+  tradingreturns[(j+2),2] = 3 # dow strategy is factor 3
+}
+
+colnames(tradingreturns) <- c("Returns", "Portfolio")
+tradingreturns = data.frame(tradingreturns)
+tradingreturns$Returns = as.double(as.character( tradingreturns$Returns ))
+tradingreturns$Portfolio = factor( tradingreturns$Portfolio )
+res.aov <- aov(Returns~Portfolio, data = tradingreturns)
+summary(res.aov)
+TukeyHSD(res.aov)
+boxplot(Returns~Portfolio, data = tradingreturns)
+```
+
+Finally we have an active trading strategy that handily beats owning the index! The Tukey 1-3 comparison tells us that our "Buy Yesterday's Worst, Sell Yesterday's Best" strategy beats holding the Dow by 27%, over the average 6 month holding period in 2018. Lets attempt to scale up strategy 1 by buying the worst k & selling the worst k.
+
+### 1-way Anova on scaled-up LONG-SHORT strategies: 
+
+1. Buy yesterday's WORST performing stock, SELL yesterday's BEST performing stock
+2. Buy yesterday's 2 WORST performing stock, SELL yesterday's 2 BEST performing stock
+3. Buy yesterday's 3 WORST performing stock, SELL yesterday's 3 BEST performing stock
+4. Buy yesterday's 4 WORST performing stock, SELL yesterday's 4 BEST performing stock
+5. Buy yesterday's 5 WORST performing stock, SELL yesterday's 5 BEST performing stock
+6. Just buy the index (DIA).   
+
+```{r}
+n = 251-180 #6 months = 180 days. We have 251 trading days in 2018, so there are n such "6 month periods"
+components = dow[,2:31]
+tradingreturns = matrix(0, nrow=6*n, ncol=2)
+
+# i from 1 to n=72
+# for i = 1, look at days 2 to 181
+# for i = 2, look at days 3 to 182
+# etc.
+for(i in 1:n) {
+  trading = matrix(0,nrow=180,ncol=6)
+  
+  for(s in (1+i):(180+i)) {
+    yesterday = components[s-1,]
+    today = components[s,]
+    res = sort(yesterday, decreasing=TRUE, index.return=TRUE)
+    trading[(s-i),1] = sum(today[res$ix[30:30]]) - sum(today[res$ix[1:1]])
+    trading[(s-i),2] = sum(today[res$ix[29:30]]) - sum(today[res$ix[1:2]])
+    trading[(s-i),3] = sum(today[res$ix[28:30]]) - sum(today[res$ix[1:3]])
+    trading[(s-i),4] = sum(today[res$ix[27:30]]) - sum(today[res$ix[1:4]])
+    trading[(s-i),5] = sum(today[res$ix[26:30]]) - sum(today[res$ix[1:5]])
+    trading[(s-i),6] = dow[s,1]
+  }
+  # arithmetic prog
+  # start = a + (n-1)*d
+  j = 1 + (i-1)*6
+  tradingreturns[j,1] = sum(trading[,1])
+  tradingreturns[j,2] = 1 # first trading strategy is factor 1
+  
+  tradingreturns[(j+1),1] = sum(trading[,2])
+  tradingreturns[(j+1),2] = 2 # second trading strategy is factor 2
+  
+  tradingreturns[(j+2),1] = sum(trading[,3])
+  tradingreturns[(j+2),2] = 3 # dow strategy is factor 3
+  
+  tradingreturns[(j+3),1] = sum(trading[,4])
+  tradingreturns[(j+3),2] = 4 # dow strategy is factor 3
+  
+  tradingreturns[(j+4),1] = sum(trading[,5])
+  tradingreturns[(j+4),2] = 5 # dow strategy is factor 3
+  
+  tradingreturns[(j+5),1] = sum(trading[,6])
+  tradingreturns[(j+5),2] = 6 # dow strategy is factor 3
+  
+}
+
+colnames(tradingreturns) <- c("Returns", "Portfolio")
+tradingreturns = data.frame(tradingreturns)
+tradingreturns$Returns = as.double(as.character( tradingreturns$Returns ))
+tradingreturns$Portfolio = factor( tradingreturns$Portfolio )
+res.aov <- aov(Returns~Portfolio, data = tradingreturns)
+summary(res.aov)
+TukeyHSD(res.aov)
+boxplot(Returns~Portfolio, data = tradingreturns)
+plot(allEffects(lm(Returns~Portfolio,data=tradingreturns)))
+```
+
+We note that by buying yesterday's 5 worst & selling yesterday's 5 best performing Dow components, we can beat the Dow by 173% (see Tukey 6-5) over the average 6 month duration in 2018.
+
+**Conclusion:** There exist several long-short strategies for alpha generation in the Dow family.

@@ -36,7 +36,7 @@ library(leaps)
 library(effects)
 
 ###########   CHANGE THIS LOCATION TO POINT TO THE SOURCE OF DATA ######
-dowfile = "~/Desktop/525/project/dow.csv"
+dowfile = "https://github.com/krishnanraman/525project1/blob/master/dow.csv"
 
 df = read.csv(dowfile)
 head(df)
